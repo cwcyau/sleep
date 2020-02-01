@@ -1,0 +1,132 @@
+---
+title: "Sleep Example"
+author: "Christopher Yau"
+date: "01/02/2020"
+output: rmdformats::readthedown
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Install packages
+
+There are some R packages required for the following analysis. Use the following commands to install them:
+
+```
+install.packages("tidyverse")
+install.packages("ggplot2")
+install.packages("reshape2")
+install.packages("mixdir")
+```
+
+# Preamble
+
+Load the prerequisite R packages to make their functionality available for use:
+```{r,warning=FALSE,message=FALSE}
+set.seed(12343) # initialises the random number generator
+library(mixdir)
+library(ggplot2)
+library(tidyverse)
+library(reshape2)
+```
+
+# Reading in data
+
+We will use the command `read_csv` from the `tidyverse` package to load a comma-separated value file called `example_data.csv`. The file contains simulated data for 500 responses to a fictional five question survey. Each question has three possible responses which we always denote generically as A, B and C. The file contents will be stored in an R object called `Xt_melt`:
+
+```{r,warning=FALSE,message=FALSE}
+Xt_melt = read_csv(file = "example_data.csv")
+```
+
+We can display the first five rows of `Xt_melt` to look at its form:
+```{r}
+Xt_melt[1:5, ]
+```
+
+We are using "melt" in the name of the R object because the data is in a "molten" format (Person, Variable, Value). To convert this into a tabular format, we will use the command `dcast` which "casts" the data in `Xt.melt`:
+```{r}
+Xt = dcast(data = Xt_melt, formula = Person~variable )
+```
+
+We can display the first five rows of `Xt` to look at its form:
+```{r}
+Xt[1:5, ]
+```
+
+The formula used in the `dcast` command says that for each unique `Person` in `Xt_melt` we create a column for each unique `variable` thus we are able to convert from molten to tabular form. 
+
+We can use the command `melt` to convert a tabular form into a molten format:
+```{r}
+melt(Xt, id.vars = "Person", measure.vars = c("Q1", "Q2", "Q3", "Q4", "Q5"))[1:5, ]
+```
+
+# Latent class analysis
+
+We will use the `mixdir` R package to perform latent class analysis (for details see the [paper](https://const-ae.name/publication/mixdir/)).
+
+First we need to declare some variables to hold the number of individuals in the survey and the number of questions:
+```{r}
+N = dim(Xt)[1] # number of individuals
+P = dim(Xt)[2]-1 # number of questions (minus one because the first column is a person identifier)
+```
+
+Now, we will use `mixdir`, we will initialise with a maximum of 10 latent classes but allow `mixdir` to learn whether to use all these during optimisation:
+```{r}
+num_latent_classes = 10 # declare maximum number of latent classes
+out = mixdir(Xt[,2:(P+1)], n_latent = num_latent_classes, alpha = 1, beta = 1,
+       select_latent = FALSE, max_iter = 1000, epsilon = 0.001, repetitions = 5)
+```
+
+In the command above we used `Xt[,2:P+1]` which means to use the 2nd to last columns of `Xt` for analysis. We skip the first column since this holds the person identifier. 
+
+The output of the `mixdir` analysis is stored in an object called `out`. This contains a number of items:
+```{r}
+names(out)
+```
+
+Lets plot the `convergence` item in `out`:
+```{r}
+qplot(1:length(out$convergence), out$convergence, xlab="Iteration", ylab="ELBO")
+```
+
+This plots shows the convergence of the algorithm. The algorithm optimises the parameters of the latent class model to the data. As it does so, it increases a quantity known as the ELBO. The higher the ELBO, the better the fit of the model to the data. Here, nearly 500 optimisation steps has been sufficient for the algorithm to converge. Sometimes more steps are required or if the change in ELBO between optimisation steps is small, we could stop the algorithm early.
+
+There are three other key parameters used in `mixdir` which can be changed to increased the number of optimisation steps:
+
+- `max_iter` denotes the maximum number of optimisation steps that the algorithm will use,
+- `epsilon` denotes the minimum acceptable percentage change in the ELBO between successive optimisation steps before the algorithm terminates,
+- `repetitions` means how many times the algorithm is randomly initialised and repeated. Sometimes different initialisations can lead to convergence to models with better ELBOs. The run with the highest ELBO is reported. 
+
+# Analysing the results
+
+## Estimating the number of classes
+
+The first thing we might want to check is how many classes have been detected in the data. We can do this by plotting the quantity `out$lambda`
+
+```{r}
+qplot(1:num_latent_classes, out$lambda, xlab="Class", ylab="Probability")
+```
+
+The values of `out$lambda` represent the probability of each of the classes. In this case, we allowed for up to 10 classes, so `out$lambda` contains 10 values. We can see that only three classes have non-zero probabilities which indicates that there are three classes detected in the data (there were three classes in the simulated data!).
+
+## Class-specific response profiles
+
+We can use the command `plot_features` to visualise the response profile for each class:
+
+```{r,warning=FALSE,message=FALSE}
+plot_features(c(1:P), category_prob = out$category_prob, classes = which(out$lambda > 0.05) )
+```
+
+Here we used `which(out$lambda > 0.05)` to select only classes that have probability great than 0.05. 
+
+The plot shows, for instance, people in class G (7) tended to answer "A" for questions 4 and 5 whilst those in class H (8) tended to answer with "C". Notice that the three classes show little difference in response to questions 1-3 (this is how they were simulated!).
+
+## Question importance
+
+We can use the command `find_typical_features` to determine which question (features) are most important for driving each subclass:
+```{r}
+find_typical_features(out, top_n=2)
+```
+
+This shows that people in class 9 tend to answer "B" in response to question 5 with probability 0.7728764. Whilst people in class 8 tend to answer "C" in response to question 4 with probability 0.7489321. 
